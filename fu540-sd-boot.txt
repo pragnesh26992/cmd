@@ -1,0 +1,135 @@
+root@sagark-Ubu14:~# gdisk /dev/sdd -> Use gdisk from git
+GPT fdisk (gdisk) version 0.8.8
+
+Partition table scan:
+  MBR: protective
+  BSD: not present
+  APM: not present
+  GPT: present
+
+Found valid GPT with protective MBR; using GPT.
+
+Command (? for help): p
+Disk /dev/sdd: 15523840 sectors, 7.4 GiB
+Logical sector size: 512 bytes
+Disk identifier (GUID): 34DA8D17-29CB-4650-B511-71A676C91DC1
+Partition table holds up to 128 entries
+First usable sector is 34, last usable sector is 15523806
+Partitions will be aligned on 2048-sector boundaries
+Total free space is 198366 sectors (96.9 MiB)
+
+Number  Start (sector)    End (sector)  Size       Code  Name
+   1            2048           67583   32.0 MiB    FFFF  SiFive bare-metal (or s	->5202
+   2          264192        15523806   7.3 GiB     8300  Linux filesystem
+   4           67584           67839   128.0 KiB   FFFF  SiFive FSBL (first-stag	->5201
+
+===================================================================
+Gptdisk
+===================================================================
+
+git clone https://github.com/tmagik/gptfdisk.git
+cd gptfdisk
+make
+
+===================================================================
+FSBL
+===================================================================
+
+******* Building a RISC-V cross-toolchain with crosstool-ng ******
+git clone https://github.com/crosstool-ng/crosstool-ng
+./bootstrap
+./configure
+make -j$(getconf _NPROCESSORS_ONLN)
+sudo make install
+mkdir rv64gc-elf
+cd rv64gc-elf
+ct-ng riscv64-unknown-elf
+ct-ng build
+cd ..
+
+git clone https://github.com/sifive/freedom-u540-c000-bootloader.git
+cd freedom-u540-c000-bootloader
+make
+
+======================================================
+u-boot
+======================================================
+
+**************** Toolchain Download *****************
+https://toolchains.bootlin.com/releases_riscv64.html
+
+export PATH=$PATH:/<toolchain-extract-dir>/riscv64--glibc--bleeding-edge-2018.11-1/bin/
+
+git clone https://gitlab.denx.de/u-boot/u-boot.git
+cd u-boot
+make sifive_fu540_defconfig
+export ARCH=riscv
+export CROSS_COMPILE=riscv64-linux-
+make
+
+======================================================
+Opensbi
+======================================================
+
+git clone https://github.com/riscv/opensbi.git
+cd opensbi
+make PLATFORM=sifive/fu540 O=build_dir I=install_dir FW_PAYLOAD_PATH=/home/pragneshp/opensource/u-boot/u-boot.bin FW_PAYLOAD_FDT_PATH=/home/pragneshp/opensource/linux/arch/riscv/boot/dts/sifive/hifive-unleashed-a00.dtb install
+
+
+
+sudo dd if=fw_payload.bin of=/dev/sdc1 bs=1M
+sudo dd if=fsbl.bin of=/dev/sdc4 bs=1M
+
+restore /home/pragneshp/opensource/opensbi/build/platform/sifive/fu540/firmware/fw_payload.bin binary 0x80000000
+
+sudo /usr/local/bin/openocd -f /usr/local/share/openocd/scripts/board/sifive-hifiveu.cfg
+restore /home/pragneshp/opensource/freedom-u540-c000-bootloader/fsbl.bin binary 0x8000000
+restore /home/pragneshp/opensource/u-boot/spl/u-boot-spl.bin binary 0x8000000
+file /home/pragneshp/opensource/u-boot/spl/u-boot-spl
+ thread apply all set $pc=0x8000000
+c
+restore /home/pragneshp/opensource/u-boot/u-boot.itb binary 0x80000000
+set $pc=$pc + 2
+c
+
+sp             0x80fabd0
+sp             0x80fab00
+
+gd= 80FABE0
+gd->malloc_base = 0x80fadf0
+
+
+
+setenv serverip 172.16.35.74;setenv ipaddr 172.16.35.40;tftpboot 0x83000000 fit.itb;bootm 0x83000000
+
+git send-email --to u-boot@lists.denx.de --cc-cmd='./scripts/get_maintainer.pl --norolestats' --cc=atish.patra@wdc.com,palmerdabbelt@google.com,bmeng.cn@gmail.com,paul.walmsley@sifive.com,anup.patel@wdc.com,sagar.kadam@sifive.com,rick@andestech.com v2-000*
+
+
+GDB
+Memory write - set *((unsigned char *) 0x80000001) = 100
+
+sudo /usr/local/bin/openocd -f /usr/local/share/openocd/scripts/board/sifive-hifiveu.cfg
+restore /home/pragneshp/opensource/freedom-u540-c000-bootloader/fsbl.bin binary 0x8000000
+restore /home/pragneshp/opensource/u-boot/spl/u-boot-spl.bin binary 0x8000000
+file /home/pragneshp/opensource/u-boot/spl/u-boot-spl
+ thread apply all set $pc=0x8000000
+c
+restore /home/pragneshp/opensource/aloe-u-boot/u-boot/u-boot.itb binary 0x80000000
+set $pc=$pc + 2
+c
+
+==============================================================================
+
+CPIO Unpack and Pack
+To unpack:
+
+gunzip initramfs.cpio.gz
+mkdir src && cd ./src
+sudo cpio -id < ../initramfs.cpio
+
+
+To pack:
+
+// Change permision of etc/shadow to 644
+sudo find . | cpio --create --format='newc' > /tmp/newinitrd.cpio
+gzip /tmp/newinitrd.cpio
